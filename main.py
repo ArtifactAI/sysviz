@@ -1,7 +1,8 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QGraphicsItem
 from PyQt5.QtCore import Qt, QPointF, QRectF, QLineF
-from PyQt5.QtGui import QPen, QBrush, QColor, QPainter, QPainterPath
+from PyQt5.QtGui import QPen, QBrush, QColor, QPainter, QPainterPath, QPolygonF
+import math
 
 class Block(QGraphicsItem):
     def __init__(self, x, y, w, h, text):
@@ -39,17 +40,37 @@ class Connection(QGraphicsItem):
         self.endItem = endItem
         self.setZValue(-1)
         self.updatePosition()
+        self.arrowSize = 5
+        self.pen = QPen(Qt.black, 1)  # Define the pen here
 
     def boundingRect(self):
-        return QRectF(self.line().p1(), self.line().p2()).normalized()
+        extra = (self.pen.width() + self.arrowSize) / 2.0
+        return QRectF(self.line().p1(), self.line().p2()).normalized().adjusted(-extra, -extra, extra, extra)
 
     def paint(self, painter, option, widget):
-        painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(self.line())
+        painter.setPen(self.pen)
+        painter.setBrush(Qt.black)
+
+        line = self.line()
+        painter.drawLine(line)
+
+        # Draw the arrow
+        angle = math.atan2(-line.dy(), line.dx())
+        arrowP1 = line.p2() - QPointF(math.sin(angle + math.pi / 3) * self.arrowSize,
+                                      math.cos(angle + math.pi / 3) * self.arrowSize)
+        arrowP2 = line.p2() - QPointF(math.sin(angle + math.pi - math.pi / 3) * self.arrowSize,
+                                      math.cos(angle + math.pi - math.pi / 3) * self.arrowSize)
+
+        arrowHead = QPolygonF()
+        arrowHead.append(line.p2())
+        arrowHead.append(arrowP1)
+        arrowHead.append(arrowP2)
+        painter.drawPolygon(arrowHead)
 
     def updatePosition(self):
-        self.setLine(QLineF(self.startItem.sceneBoundingRect().center(),
-                            self.endItem.sceneBoundingRect().center()))
+        start_point = self.getEdgePoint(self.startItem, self.endItem)
+        end_point = self.getEdgePoint(self.endItem, self.startItem)
+        self.setLine(QLineF(start_point, end_point))
 
     def setLine(self, line):
         self._line = line
@@ -58,6 +79,20 @@ class Connection(QGraphicsItem):
     def line(self):
         return self._line
 
+    def getEdgePoint(self, sourceItem, targetItem):
+        source_rect = sourceItem.sceneBoundingRect()
+        target_center = targetItem.sceneBoundingRect().center()
+        
+        # Calculate the center points of each edge
+        top = QPointF(source_rect.center().x(), source_rect.top())
+        bottom = QPointF(source_rect.center().x(), source_rect.bottom())
+        left = QPointF(source_rect.left(), source_rect.center().y())
+        right = QPointF(source_rect.right(), source_rect.center().y())
+        
+        # Find the edge point closest to the target center
+        edge_points = [top, bottom, left, right]
+        return min(edge_points, key=lambda p: QLineF(p, target_center).length())
+
 class SystemView(QGraphicsView):
     def __init__(self):
         super().__init__()
@@ -65,6 +100,7 @@ class SystemView(QGraphicsView):
         self.setScene(self.scene)
         self.setRenderHint(QPainter.Antialiasing)
         self.setBackgroundBrush(QBrush(Qt.white))  # White background
+        self.setDragMode(QGraphicsView.ScrollHandDrag)  # Enable panning
 
     def create_system_from_spec(self, spec):
         # Clear existing items
@@ -104,11 +140,10 @@ class MainWindow(QMainWindow):
         connect B C
         """
         self.view.create_system_from_spec(spec)
-        self.view.fitInView(self.view.scene.sceneRect(), Qt.KeepAspectRatio)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.view.fitInView(self.view.scene.sceneRect(), Qt.KeepAspectRatio)
+        # Remove the fitInView call to keep blocks the same size
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
